@@ -1,157 +1,51 @@
--- Here I am creating more manageable tables that I will divide the columns from the raw dataset (data/Superstore.csv) into. 
-
-CREATE TABLE customers (
-    customer_id TEXT PRIMARY KEY,
-    customer_name TEXT,
-    segment TEXT
-);
-
-CREATE TABLE products (
-    product_id TEXT PRIMARY KEY,
-    product_name TEXT,
-    category TEXT,
-    sub_category TEXT
-);
-
-CREATE TABLE locations (
-    location_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    city TEXT,
-    state TEXT,
-    region TEXT,
-    postal_code TEXT,
-    country TEXT
-);
-
-CREATE TABLE orders (
-    order_id TEXT PRIMARY KEY,
-    customer_id TEXT,
-    order_date TEXT,
-    ship_date TEXT,
-    ship_mode TEXT,
-    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-);
-
-CREATE TABLE order_items (
-    row_id INTEGER PRIMARY KEY,
-    order_id TEXT,
-    product_id TEXT,
-    location_id INTEGER,
-    sales REAL,
-    quantity INTEGER,
-    discount REAL,
-    profit REAL,
-    FOREIGN KEY (order_id) REFERENCES orders(order_id),
-    FOREIGN KEY (product_id) REFERENCES products(product_id),
-    FOREIGN KEY (location_id) REFERENCES locations(location_id)
-);
-
-
--- Next I'm going to populate the dimension-style tables.
-
-INSERT INTO customers (customer_id, customer_name, segment)
-SELECT DISTINCT "Customer ID", "Customer Name", "Segment"
-FROM "Sample - Superstore";
-
-INSERT INTO products (product_id, product_name, category, sub_category)
-SELECT DISTINCT "Product ID", "Product Name", "Category", "Sub-Category"
-FROM "Sample - Superstore";
-
--- When running that most recent query, it returned an error. I then used the following query to diagnose it:
-
-SELECT "Product ID", COUNT(DISTINCT "Product Name") AS name_variants
-FROM "Sample - Superstore"
-GROUP BY "Product ID"
-HAVING name_variants > 1;
-
--- This revealed slighly different naming conventions, so I had to adjust my next query accordingly.
-
-INSERT INTO products (product_id, product_name, category, sub_category)
-SELECT "Product ID", MIN("Product Name"), "Category", "Sub-Category"
-FROM "Sample - Superstore"
-GROUP BY "Product ID", "Category", "Sub-Category";
-
--- Next, I am creating the remaining dimension tables.
-
-INSERT INTO locations (city, state, region, postal_code, country)
-SELECT DISTINCT "City", "State", "Region", "Postal Code", "Country"
-FROM "Sample - Superstore";
-
-INSERT INTO orders (order_id, customer_id, order_date, ship_date, ship_mode)
-SELECT DISTINCT "Order ID", "Customer ID", "Order Date", "Ship Date", "Ship Mode"
-FROM "Sample - Superstore";
-
-INSERT INTO order_items (row_id, order_id, product_id, location_id, sales, quantity, discount, profit)
+-- First I ran a query to check the total missing counts
 SELECT
-    s."Row ID",
-    s."Order ID",
-    s."Product ID",
-    l.location_id,
-    s."Sales",
-    s."Quantity",
-    s."Discount",
-    s."Profit"
-FROM "Sample - Superstore" s
-JOIN locations l
-    ON s."City" = l.city
-    AND s."State" = l.state
-    AND s."Postal Code" = l.postal_code;
+  COUNT(*) AS total_rows,
+  COUNT(*) - COUNT(Category) AS missing_category,
+  COUNT(*) - COUNT(Price) AS missing_price,
+  COUNT(*) - COUNT(Rating) AS missing_rating,
+  COUNT(*) - COUNT(Stock) AS missing_stock,
+  COUNT(*) - COUNT(Discount) AS missing_discount
+FROM synthetic_dataset;
 
+-- Next I am going to create a completely new table, so that the raw data is preserved
+-- This new table will return the same amount of rows as the original. However, null 
+-- values in the Category and Stock columns are replaced with "Unknown", and Price nulls
+-- are replaced with the average price, discount nulls are replaced with 0. Rating nulls were
+-- left untouched
 
--- My schema is now complete. I'll now execute SQL queries to analyze the data
+CREATE TABLE synthetic_dataset_clean AS
+SELECT
+  CASE WHEN Category IS NULL THEN 'Unknown' ELSE Category END AS Category,
+  CASE WHEN Price IS NULL 
+       THEN (SELECT AVG(Price) FROM synthetic_dataset WHERE Price IS NOT NULL)
+       ELSE Price 
+  END AS Price,
+  Rating,
+  CASE WHEN Stock IS NULL THEN 'Unknown' ELSE Stock END AS Stock,
+  CASE WHEN Discount IS NULL THEN 0 ELSE Discount END AS Discount
+FROM synthetic_dataset;
 
--- Total sales and profit by category
+-- This query checks that the row counts match the original dataset. This is an
+-- important diagnostic step before we go further
 
 SELECT
-    p.category,
-    ROUND(SUM(oi.sales), 2) AS total_sales,
-    ROUND(SUM(oi.profit), 2) AS total_profit
-FROM order_items oi
-JOIN products p ON oi.product_id = p.product_id
-GROUP BY p.category
-ORDER BY total_sales DESC;
+  (SELECT COUNT(*) FROM synthetic_dataset) AS original_rows,
+  (SELECT COUNT(*) FROM synthetic_dataset_clean) AS clean_rows;
 
-
--- Each sale along with the name and category of the product that was sold, limited to 20 results in descending order.
+-- This query confirms that the nulls are gone. As expected, the only
+-- column with null values is missing_rating (2050), since I left that column untouched
 
 SELECT
-    oi.row_id,
-    oi.sales,
-    p.product_name,
-    p.category
-FROM order_items oi
-LEFT JOIN products p ON oi.product_id = p.product_id
-ORDER BY oi.sales DESC LIMIT 20;
-
--- Show products with sales below the overall average.
-
-SELECT
-    oi.row_id,
-    oi.sales,
-    p.product_name
-FROM order_items oi
-LEFT JOIN products p
-ON oi.product_id = p.product_id
-WHERE oi.sales < (SELECT avg(sales) FROM order_items) ORDER BY oi.sales DESC LIMIT 10;
+  COUNT(*) - COUNT(Category) AS missing_category,
+  COUNT(*) - COUNT(Price) AS missing_price,
+  COUNT(*) - COUNT(Stock) AS missing_stock,
+  COUNT(*) - COUNT(Discount) AS missing_discount,
+  COUNT(*) - COUNT(Rating) AS missing_rating 
+FROM synthetic_dataset_clean;
 
 
--- Find customers whose most recent order resulted in a net loss (negative profit).
--- Uses a CTE to first identify each customer's latest order, then checks its profitability.
-WITH latest_orders AS (
-    SELECT
-        o.customer_id,
-        o.order_id,
-        RANK() OVER (PARTITION BY o.customer_id ORDER BY o.order_date DESC) AS rnk
-    FROM orders o
-)
-SELECT
-    c.customer_name,
-    lo.order_id,
-    ROUND(SUM(oi.profit), 2) AS order_profit
-FROM latest_orders lo
-JOIN order_items oi ON lo.order_id = oi.order_id
-JOIN customers c ON lo.customer_id = c.customer_id
-WHERE lo.rnk = 1
-GROUP BY lo.customer_id, lo.order_id
-HAVING order_profit < 0
-ORDER BY order_profit ASC;
+
+
+
 
