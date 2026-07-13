@@ -18,7 +18,23 @@ The dataset used in this project can be found in data/, and was originally sourc
 
 ## Data Cleaning
 
+Before analysis, the raw dataset was checked for missing values across all five columns. Out of 4,363 total rows: Category was missing ~63% of values, Price was missing ~4%, Rating was missing ~47%, Stock was missing ~31%, and Discount was missing ~9%.
 
+To preserve the original data for reference, a new table (synthetic_dataset_clean) was created rather than modifying the raw table directly. Missing values were then handled on a per-column basis, depending on the type of data and how much was missing:
+
+- Category: missing values replaced with "Unknown", since dropping ~63% of rows wasn't a viable option
+- Stock: missing values replaced with "Unknown", for the same reason (~31% missing)
+- Price: missing values replaced with the average price across all non-null rows, since only ~4% of values were missing and a small amount of imputation has minimal impact on overall analysis
+- Discount: missing values replaced with 0, under the assumption that no discount was recorded/applied
+- Rating: left untouched (nulls remain nulls). Since Rating reflects customer sentiment and nearly half the values were missing, imputing a fabricated rating (e.g., average) could meaningfully distort sentiment based insights. Queries involving Rating will explicitly filter out nulls where relevant.
+
+After creating the cleaned table, two verification checks were run to confirm the cleaning worked as intended:
+
+- Row count check: confirmed synthetic_dataset_clean has the same number of rows as the original table, meaning no data was accidentally dropped.
+
+- Remaining nulls check: confirmed that Category, Price, Stock, and Discount had zero missing values post-cleaning, and that Rating was the only column still showing missing values (2,050, matching the original count) as expected, since it was intentionally left untouched.
+
+Full SQL for this process is available in sql/data.sql.
 
 
 
