@@ -38,7 +38,7 @@ After creating the cleaned table, two verification checks were run to confirm th
 
 ![SQL Picture](assets/sql5.png)
 
-Full SQL for this process is available in sql/data.sql.
+Full SQL for this process with commented instructions is available in sql/data-cleaning.sql.
 
 ## Business Questions & Analysis
 
